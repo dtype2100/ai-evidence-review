@@ -244,6 +244,16 @@ class DemoSmokeTests(unittest.TestCase):
             self.assertIn("unresolved", report)
             self.assertIn("exit code: 0", report)
 
+    def test_urllib3_candidate_reproduces_nonhex_fingerprint_error(self):
+        source = Path(__file__).resolve().parents[1] / "cases" / "urllib3-fingerprint-5211"
+        with tempfile.TemporaryDirectory() as temporary:
+            case_dir = Path(temporary) / source.name
+            shutil.copytree(source, case_dir)
+            result = run_check(case_dir)
+            self.assertEqual(result["case_id"], "urllib3-fingerprint-5211")
+            self.assertEqual(result["exit_code"], 1)
+            self.assertIn("binascii.Error: Non-hexadecimal digit found", result["stderr"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,4 +1,4 @@
 __pycache__/
 *.pyc
-cases/demo/check.json
-cases/demo/report.md
+cases/*/check.json
+cases/*/report.md
