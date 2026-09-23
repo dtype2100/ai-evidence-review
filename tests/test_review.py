@@ -1,4 +1,5 @@
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -173,6 +174,22 @@ class ValidationTests(unittest.TestCase):
         with redirect_stdout(output):
             self.assertEqual(main(["evaluate", str(self.case_dir)]), 0)
         self.assertEqual(json.loads(output.getvalue())["precision"], 1.0)
+
+
+class DemoSmokeTests(unittest.TestCase):
+    def test_demo_runs_end_to_end_without_claiming_a_real_case(self):
+        source = Path(__file__).resolve().parents[1] / "cases" / "demo"
+        with tempfile.TemporaryDirectory() as temporary:
+            case_dir = Path(temporary) / "demo"
+            shutil.copytree(source, case_dir)
+            self.assertEqual(main(["validate", str(case_dir), str(case_dir / "findings.json")]), 0)
+            self.assertEqual(main(["check", str(case_dir)]), 0)
+            self.assertEqual(main(["report", str(case_dir), str(case_dir / "findings.json"),
+                                   str(case_dir / "verdicts.json")]), 0)
+            report = (case_dir / "report.md").read_text(encoding="utf-8")
+            self.assertIn("illustrative", report)
+            self.assertIn("unresolved", report)
+            self.assertIn("exit code: 0", report)
 
 
 if __name__ == "__main__":

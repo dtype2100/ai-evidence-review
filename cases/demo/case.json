@@ -1,0 +1,8 @@
+{
+  "id": "demo",
+  "source_url": "local:cases/demo/fixture/source.py",
+  "source_revision": "illustrative-v1",
+  "license": "original illustrative fixture; publication requires owner approval",
+  "description": "A contrived discount bug with a passing zero-rate test",
+  "kind": "illustrative"
+}

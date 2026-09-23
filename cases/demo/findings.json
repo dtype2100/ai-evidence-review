@@ -1,0 +1,10 @@
+[
+  {
+    "id": "f1",
+    "case_id": "demo",
+    "path": "source.py",
+    "line": 3,
+    "claim": "A positive discount rate increases the total, contrary to the function contract.",
+    "verification": "Check whether discounted_price(100, 0.1) equals 90."
+  }
+]
