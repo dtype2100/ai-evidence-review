@@ -1,0 +1,10 @@
+[
+  {
+    "id": "urllib3-fingerprint-5211-f1",
+    "case_id": "urllib3-fingerprint-5211",
+    "path": "source.py",
+    "line": 46,
+    "claim": "assert_fingerprint validates only fingerprint length, not hex content, so a correctly sized non-hex fingerprint (e.g. 'g' * 32) reaches unhexlify and escapes as binascii.Error (a ValueError) instead of the SSLError the function uses for every other invalid-fingerprint and mismatch path; callers catching SSLError will not handle it.",
+    "verification": "In a scratch copy, call assert_fingerprint(b'certificate', 'g' * 32) and assert the raised exception is SSLError; also probe 40- and 64-char fingerprints containing a non-hex digit. Expected current behavior: binascii.Error: Non-hexadecimal digit found, raised from source.py line 46, not an SSLError."
+  }
+]
