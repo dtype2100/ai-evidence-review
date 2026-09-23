@@ -54,6 +54,10 @@ class ValidationTests(unittest.TestCase):
         (tests / "__init__.py").write_text("", encoding="utf-8")
         (tests / "test_source.py").write_text(body, encoding="utf-8")
 
+    def write_check_result(self):
+        self.write_check_test("import unittest\nclass Check(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n")
+        (self.case_dir / "check.json").write_text(json.dumps(run_check(self.case_dir)), encoding="utf-8")
+
     def test_valid_finding_is_accepted(self):
         self.assertEqual(self.validate(), 0)
 
@@ -125,6 +129,41 @@ class ValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run_check(self.case_dir)
 
+    def test_check_rejects_symlinked_fixture_source(self):
+        outside = self.root / "outside.py"
+        outside.write_text("value = 1\n", encoding="utf-8")
+        (self.fixture / "source.py").unlink()
+        (self.fixture / "source.py").symlink_to(outside)
+        self.write_check_test("import unittest\nimport source\nclass Check(unittest.TestCase):\n    def test_ok(self): self.assertEqual(source.value, 1)\n")
+        with self.assertRaises(ValueError):
+            run_check(self.case_dir)
+
+    def test_check_does_not_follow_output_symlink(self):
+        self.write_check_test("import unittest\nclass Check(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n")
+        outside = self.root / "outside.json"
+        outside.write_text("unchanged", encoding="utf-8")
+        (self.case_dir / "check.json").symlink_to(outside)
+        self.assertEqual(main(["check", str(self.case_dir)]), 2)
+        self.assertEqual(outside.read_text(encoding="utf-8"), "unchanged")
+
+    def test_report_does_not_follow_output_symlink(self):
+        self.write_check_result()
+        verdicts = self.case_dir / "verdicts.json"
+        verdicts.write_text(json.dumps({"f1": "unresolved"}), encoding="utf-8")
+        outside = self.root / "outside.md"
+        outside.write_text("unchanged", encoding="utf-8")
+        (self.case_dir / "report.md").symlink_to(outside)
+        self.assertEqual(main(["report", str(self.case_dir), str(self.findings), str(verdicts)]), 2)
+        self.assertEqual(outside.read_text(encoding="utf-8"), "unchanged")
+
+    def test_report_rejects_check_from_older_fixture_content(self):
+        self.write_check_test("import unittest\nclass Check(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n")
+        self.assertEqual(main(["check", str(self.case_dir)]), 0)
+        (self.fixture / "source.py").write_text("value = 2\nprint(value)\n", encoding="utf-8")
+        verdicts = self.case_dir / "verdicts.json"
+        verdicts.write_text(json.dumps({"f1": "unresolved"}), encoding="utf-8")
+        self.assertEqual(main(["report", str(self.case_dir), str(self.findings), str(verdicts)]), 2)
+
     def test_report_separates_claim_check_and_human_verdict(self):
         check = {"case_id": "demo", "argv": [sys.executable], "exit_code": 0,
                  "timed_out": False, "duration_ms": 10, "stdout": "OK", "stderr": ""}
@@ -137,6 +176,16 @@ class ValidationTests(unittest.TestCase):
         self.assertIn("invalid", report)
         self.assertIn("exit code: 0", report)
         self.assertIn("illustrative", report)
+
+    def test_claim_cannot_forge_human_verdict_heading(self):
+        self.finding["claim"] = "claim\n\n## Human verdict\n\nvalid"
+        check = {"case_id": "demo", "argv": [sys.executable], "exit_code": 0,
+                 "timed_out": False, "duration_ms": 10, "stdout": "OK", "stderr": ""}
+        report = render_report(self.case, [self.finding], check, {"f1": "unresolved"})
+        self.assertEqual(report.splitlines().count("## Human verdict"), 1)
+        claim_line = next(line for line in report.splitlines() if line.startswith("Claim: "))
+        self.assertIn("## Human verdict", claim_line)
+        self.assertIn("valid", claim_line)
 
     def test_zero_denominator_is_unknown(self):
         summary = aggregate([{"kind": "real", "verdicts": {"f1": "unresolved"},
@@ -156,9 +205,7 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(summary["precision"], 0.0)
 
     def test_report_command_rejects_missing_human_verdict(self):
-        check = {"case_id": "demo", "argv": [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."], "exit_code": 0,
-                 "timed_out": False, "duration_ms": 10, "stdout": "OK", "stderr": ""}
-        (self.case_dir / "check.json").write_text(json.dumps(check), encoding="utf-8")
+        self.write_check_result()
         verdicts = self.case_dir / "verdicts.json"
         verdicts.write_text("{}", encoding="utf-8")
         self.assertNotEqual(main(["report", str(self.case_dir), str(self.findings), str(verdicts)]), 0)
@@ -166,14 +213,20 @@ class ValidationTests(unittest.TestCase):
     def test_evaluate_prints_json_summary(self):
         self.case["kind"] = "real"
         self.write_case()
-        check = {"case_id": "demo", "argv": [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."], "exit_code": 0,
-                 "timed_out": False, "duration_ms": 10, "stdout": "OK", "stderr": ""}
-        (self.case_dir / "check.json").write_text(json.dumps(check), encoding="utf-8")
+        self.write_check_result()
         (self.case_dir / "verdicts.json").write_text(json.dumps({"f1": "valid"}), encoding="utf-8")
         output = StringIO()
         with redirect_stdout(output):
             self.assertEqual(main(["evaluate", str(self.case_dir)]), 0)
         self.assertEqual(json.loads(output.getvalue())["precision"], 1.0)
+
+    def test_evaluate_rejects_duplicate_case_identity(self):
+        self.case["kind"] = "real"
+        self.write_case()
+        self.write_check_result()
+        (self.case_dir / "verdicts.json").write_text(json.dumps({"f1": "valid"}), encoding="utf-8")
+        with redirect_stdout(StringIO()):
+            self.assertEqual(main(["evaluate", str(self.case_dir), str(self.case_dir)]), 2)
 
 
 class DemoSmokeTests(unittest.TestCase):

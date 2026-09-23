@@ -2,6 +2,8 @@
 
 import json
 import html
+import hashlib
+import os
 import re
 import subprocess
 import sys
@@ -11,7 +13,7 @@ from pathlib import Path
 
 CASE_KEYS = {"id", "source_url", "source_revision", "license", "description", "kind"}
 FINDING_KEYS = {"id", "case_id", "path", "line", "claim", "verification"}
-CHECK_KEYS = {"case_id", "argv", "exit_code", "timed_out", "duration_ms", "stdout", "stderr"}
+CHECK_KEYS = {"case_id", "argv", "exit_code", "timed_out", "duration_ms", "stdout", "stderr", "fixture_sha256"}
 CHECK_ARGV = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."]
 
 
@@ -23,8 +25,28 @@ def _read_json(path: Path):
         raise ValueError(f"cannot read {path}: {error}") from error
 
 
+def _write_output(path: Path, content: str) -> None:
+    if path.is_symlink():
+        raise ValueError(f"output path may not be a symlink: {path}")
+    path.write_text(content, encoding="utf-8")
+
+
 def _inside(root: Path, child: Path) -> bool:
     return child.resolve().is_relative_to(root.resolve())
+
+
+def _fixture_digest(fixture: Path) -> str:
+    if fixture.is_symlink():
+        raise ValueError("fixture may not contain symlinks")
+    digest = hashlib.sha256()
+    for path in sorted(fixture.rglob("*")):
+        if path.is_symlink():
+            raise ValueError("fixture may not contain symlinks")
+        if path.is_file():
+            digest.update(path.relative_to(fixture).as_posix().encode("utf-8") + b"\0")
+            with path.open("rb") as stream:
+                digest.update(hashlib.file_digest(stream, "sha256").digest())
+    return digest.hexdigest()
 
 
 def load_case(case_dir: Path) -> dict:
@@ -75,6 +97,7 @@ def load_findings(path: Path, case: dict, fixture: Path) -> list[dict]:
 def run_check(case_dir: Path, timeout_seconds: int = 30) -> dict:
     case = load_case(case_dir)
     fixture = case_dir / "fixture"
+    fixture_sha256 = _fixture_digest(fixture)
     tests = fixture / "tests"
     if not tests.is_dir() or not _inside(fixture, tests):
         raise ValueError("fixture/tests must be a directory inside the fixture")
@@ -92,6 +115,7 @@ def run_check(case_dir: Path, timeout_seconds: int = 30) -> dict:
             capture_output=True,
             text=True,
             check=False,
+            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         )
         exit_code, timed_out = completed.returncode, False
         stdout, stderr = completed.stdout, completed.stderr
@@ -108,6 +132,7 @@ def run_check(case_dir: Path, timeout_seconds: int = 30) -> dict:
 
     return {
         "case_id": case["id"],
+        "fixture_sha256": fixture_sha256,
         "argv": argv,
         "exit_code": exit_code,
         "timed_out": timed_out,
@@ -123,6 +148,8 @@ def load_check(case_dir: Path, case: dict) -> dict:
         raise ValueError("check.json must contain exactly the check fields")
     if check["case_id"] != case["id"] or check["argv"] != CHECK_ARGV:
         raise ValueError("check.json does not match the case or fixed command")
+    if check["fixture_sha256"] != _fixture_digest(case_dir / "fixture"):
+        raise ValueError("check.json is stale for the current fixture")
     if (type(check["exit_code"]) is not int or type(check["duration_ms"]) is not int
             or check["duration_ms"] < 0 or type(check["timed_out"]) is not bool
             or not isinstance(check["stdout"], str) or not isinstance(check["stderr"], str)):
@@ -140,7 +167,7 @@ def load_verdicts(path: Path, findings: list[dict]) -> dict:
 
 
 def _md(value) -> str:
-    return re.sub(r"([\\`*_{}\[\]|])", r"\\\1", html.escape(str(value), quote=True))
+    return re.sub(r"([\\`*_{}\[\]|])", r"\\\1", html.escape(" ".join(str(value).splitlines()), quote=True))
 
 
 def render_report(case: dict, findings: list[dict], check: dict, verdicts: dict) -> str:
@@ -209,9 +236,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args[0] == "evaluate":
             records = []
+            seen_cases = set()
             for raw_dir in args[1:]:
                 case_dir = Path(raw_dir)
                 case = load_case(case_dir)
+                if case["id"] in seen_cases:
+                    raise ValueError(f"duplicate case id: {case['id']}")
+                seen_cases.add(case["id"])
                 findings = load_findings(case_dir / "findings.json", case, case_dir / "fixture")
                 records.append({"kind": case["kind"], "check": load_check(case_dir, case),
                                 "verdicts": load_verdicts(case_dir / "verdicts.json", findings)})
@@ -224,13 +255,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args[0] == "check":
             result = run_check(case_dir)
-            (case_dir / "check.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+            _write_output(case_dir / "check.json", json.dumps(result, indent=2) + "\n")
             return 0 if result["exit_code"] == 0 else 1
         case = load_case(case_dir)
         findings = load_findings(Path(args[2]), case, case_dir / "fixture")
         check = load_check(case_dir, case)
         verdicts = load_verdicts(Path(args[3]), findings)
-        (case_dir / "report.md").write_text(render_report(case, findings, check, verdicts), encoding="utf-8")
+        _write_output(case_dir / "report.md", render_report(case, findings, check, verdicts))
         return 0
     except (ValueError, OSError) as error:
         print(f"invalid evidence: {error}", file=sys.stderr)
