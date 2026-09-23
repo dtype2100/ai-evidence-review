@@ -16,6 +16,19 @@ python3 -m unittest discover -s tests -v
 
 `check` writes `cases/demo/check.json`; `report` writes `cases/demo/report.md`. The example is deliberately **illustrative**. Its existing zero-rate test passes while the claim about positive rates remains unadjudicated. The `unresolved` verdict is a placeholder, not a human finding. `evaluate` excludes illustrative cases, so this example supplies no accuracy measurement.
 
+## Run the public-source candidate
+
+The [urllib3 candidate](cases/urllib3-fingerprint-5211/case.json) is not an admitted portfolio result. Its isolated pre-fix function excerpt uses local stand-ins; the expected `check` exit code is **1** because the test exposes `binascii.Error`. Inspect the fixture before running it.
+
+```sh
+python3 review.py validate cases/urllib3-fingerprint-5211 cases/urllib3-fingerprint-5211/findings.json
+python3 review.py check cases/urllib3-fingerprint-5211
+python3 review.py report cases/urllib3-fingerprint-5211 cases/urllib3-fingerprint-5211/findings.json cases/urllib3-fingerprint-5211/verdicts.json
+python3 review.py evaluate cases/urllib3-fingerprint-5211
+```
+
+Run `check` again on each machine or after changing Python interpreters: stored results deliberately identify the interpreter that ran the test. `check.json` and `report.md` are local, ignored outputs and may contain absolute paths; inspect them before sharing. This case has one `unresolved` finding, so the adjudicated sample size is zero and precision is `null`. See [the evidence gate](evidence/README.md) before using it in a submission.
+
 ## Input contract
 
 Each case has `case.json` with exactly `id`, `source_url`, `source_revision`, `license`, `description`, and `kind` (`illustrative` or `real`), plus `fixture/` with `tests/`. `findings.json` is an array of objects with exactly `id`, `case_id`, `path`, `line`, `claim`, and `verification`. Lines are 1-based and paths must resolve inside `fixture/`. `verdicts.json` maps each finding ID to exactly one human label: `valid`, `invalid`, or `unresolved`. The CLI rejects unknown fields and mismatched IDs.
