@@ -38,3 +38,7 @@ Each case has `case.json` with exactly `id`, `source_url`, `source_revision`, `l
 `evaluate` reads each case's `findings.json`, `verdicts.json`, and `check.json`. It counts real cases only; `sample_size` is the number of valid-plus-invalid findings, excluding unresolved findings. Precision is `null` when that denominator is zero. Small case counts are demonstrations, not general accuracy claims.
 
 No auto-fix, server, database, PR creation, or publication is included. Do not include private code or secrets in portfolio evidence. Publication and submission require a separate owner decision.
+
+## Submission drafts
+
+The [AI experience answer](portfolio/ai-experience.txt) and [two-page portfolio PDF](output/pdf/AI-Evidence-Review-Portfolio.pdf) are review drafts, not submitted results. The [PDF source](portfolio/ai-evidence-review.typ) can be rebuilt with `typst compile portfolio/ai-evidence-review.typ output/pdf/AI-Evidence-Review-Portfolio.pdf`. The answer is 904 characters and the PDF is 72,101 bytes, within the [official application](https://skhynix-hackathon.com/ai-2026/apply) limits of 50–2,000 characters and one optional file up to 50 MB. The public candidate remains unresolved, so the draft makes no accuracy claim. Review the first-person answer and all evidence before using either artifact in an application.
