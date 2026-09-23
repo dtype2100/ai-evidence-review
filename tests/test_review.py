@@ -2,9 +2,11 @@ import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 
-from review import main, run_check
+from review import aggregate, main, render_report, run_check
 
 
 class ValidationTests(unittest.TestCase):
@@ -121,6 +123,56 @@ class ValidationTests(unittest.TestCase):
     def test_check_refuses_missing_tests(self):
         with self.assertRaises(ValueError):
             run_check(self.case_dir)
+
+    def test_report_separates_claim_check_and_human_verdict(self):
+        check = {"case_id": "demo", "argv": [sys.executable], "exit_code": 0,
+                 "timed_out": False, "duration_ms": 10, "stdout": "OK", "stderr": ""}
+        report = render_report(self.case, [self.finding], check, {"f1": "invalid"})
+        self.assertIn("https://example.org/source", report)
+        self.assertIn("source.py:2", report)
+        self.assertIn("## AI claim", report)
+        self.assertIn("## Observed check", report)
+        self.assertIn("## Human verdict", report)
+        self.assertIn("invalid", report)
+        self.assertIn("exit code: 0", report)
+        self.assertIn("illustrative", report)
+
+    def test_zero_denominator_is_unknown(self):
+        summary = aggregate([{"kind": "real", "verdicts": {"f1": "unresolved"},
+                              "check": {"exit_code": 0}}])
+        self.assertIsNone(summary["precision"])
+        self.assertEqual(summary["sample_size"], 0)
+        self.assertEqual(summary["unresolved"], 1)
+
+    def test_illustrative_finding_is_not_counted(self):
+        summary = aggregate([
+            {"kind": "illustrative", "verdicts": {"f1": "valid"}, "check": {"exit_code": 0}},
+            {"kind": "real", "verdicts": {"f2": "invalid"}, "check": {"exit_code": 0}},
+        ])
+        self.assertEqual(summary["valid"], 0)
+        self.assertEqual(summary["invalid"], 1)
+        self.assertEqual(summary["sample_size"], 1)
+        self.assertEqual(summary["precision"], 0.0)
+
+    def test_report_command_rejects_missing_human_verdict(self):
+        check = {"case_id": "demo", "argv": [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."], "exit_code": 0,
+                 "timed_out": False, "duration_ms": 10, "stdout": "OK", "stderr": ""}
+        (self.case_dir / "check.json").write_text(json.dumps(check), encoding="utf-8")
+        verdicts = self.case_dir / "verdicts.json"
+        verdicts.write_text("{}", encoding="utf-8")
+        self.assertNotEqual(main(["report", str(self.case_dir), str(self.findings), str(verdicts)]), 0)
+
+    def test_evaluate_prints_json_summary(self):
+        self.case["kind"] = "real"
+        self.write_case()
+        check = {"case_id": "demo", "argv": [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."], "exit_code": 0,
+                 "timed_out": False, "duration_ms": 10, "stdout": "OK", "stderr": ""}
+        (self.case_dir / "check.json").write_text(json.dumps(check), encoding="utf-8")
+        (self.case_dir / "verdicts.json").write_text(json.dumps({"f1": "valid"}), encoding="utf-8")
+        output = StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(main(["evaluate", str(self.case_dir)]), 0)
+        self.assertEqual(json.loads(output.getvalue())["precision"], 1.0)
 
 
 if __name__ == "__main__":

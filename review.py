@@ -1,6 +1,8 @@
 """Validate and record evidence for curated code-review cases."""
 
 import json
+import html
+import re
 import subprocess
 import sys
 import time
@@ -9,6 +11,8 @@ from pathlib import Path
 
 CASE_KEYS = {"id", "source_url", "source_revision", "license", "description", "kind"}
 FINDING_KEYS = {"id", "case_id", "path", "line", "claim", "verification"}
+CHECK_KEYS = {"case_id", "argv", "exit_code", "timed_out", "duration_ms", "stdout", "stderr"}
+CHECK_ARGV = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."]
 
 
 def _read_json(path: Path):
@@ -77,7 +81,7 @@ def run_check(case_dir: Path, timeout_seconds: int = 30) -> dict:
     test_files = list(tests.rglob("test*.py"))
     if not test_files or any(not _inside(fixture, file) for file in test_files):
         raise ValueError("fixture/tests must contain local test files")
-    argv = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."]
+    argv = CHECK_ARGV.copy()
     started = time.monotonic()
     try:
         completed = subprocess.run(
@@ -113,24 +117,122 @@ def run_check(case_dir: Path, timeout_seconds: int = 30) -> dict:
     }
 
 
+def load_check(case_dir: Path, case: dict) -> dict:
+    check = _read_json(case_dir / "check.json")
+    if not isinstance(check, dict) or set(check) != CHECK_KEYS:
+        raise ValueError("check.json must contain exactly the check fields")
+    if check["case_id"] != case["id"] or check["argv"] != CHECK_ARGV:
+        raise ValueError("check.json does not match the case or fixed command")
+    if (type(check["exit_code"]) is not int or type(check["duration_ms"]) is not int
+            or check["duration_ms"] < 0 or type(check["timed_out"]) is not bool
+            or not isinstance(check["stdout"], str) or not isinstance(check["stderr"], str)):
+        raise ValueError("check.json has invalid result fields")
+    return check
+
+
+def load_verdicts(path: Path, findings: list[dict]) -> dict:
+    verdicts = _read_json(path)
+    ids = {finding["id"] for finding in findings}
+    if (not isinstance(verdicts, dict) or set(verdicts) != ids
+            or any(value not in {"valid", "invalid", "unresolved"} for value in verdicts.values())):
+        raise ValueError("verdicts must label every finding exactly once")
+    return verdicts
+
+
+def _md(value) -> str:
+    return re.sub(r"([\\`*_{}\[\]|])", r"\\\1", html.escape(str(value), quote=True))
+
+
+def render_report(case: dict, findings: list[dict], check: dict, verdicts: dict) -> str:
+    lines = [
+        f"# Evidence card: {_md(case['id'])}",
+        "",
+        f"Case type: {_md(case['kind'])}",
+        f"Source URL: {_md(case['source_url'])}",
+        f"Source revision: {_md(case['source_revision'])}",
+        f"License: {_md(case['license'])}",
+        "",
+        "## Observed check",
+        "",
+        f"exit code: {check['exit_code']}; timed out: {check['timed_out']}; duration: {check['duration_ms']} ms",
+        "",
+        "stdout:",
+        f"<pre>{html.escape(check['stdout'])}</pre>",
+        "stderr:",
+        f"<pre>{html.escape(check['stderr'])}</pre>",
+        "",
+        "A check result does not prove or disprove an individual AI claim.",
+    ]
+    if not findings:
+        lines.extend(["", "## AI claim", "", "No findings (agent abstained)."])
+    for finding in findings:
+        lines.extend([
+            "", "## AI claim", "",
+            f"Finding: {_md(finding['id'])}",
+            f"Location: {_md(finding['path'])}:{finding['line']}",
+            f"Claim: {_md(finding['claim'])}",
+            f"Suggested verification: {_md(finding['verification'])}",
+            "", "## Human verdict", "",
+            _md(verdicts[finding["id"]]),
+        ])
+    return "\n".join(lines) + "\n"
+
+
+def aggregate(records: list[dict]) -> dict:
+    real = [record for record in records if record["kind"] == "real"]
+    counts = {label: 0 for label in ("valid", "invalid", "unresolved")}
+    for record in real:
+        for verdict in record["verdicts"].values():
+            counts[verdict] += 1
+    denominator = counts["valid"] + counts["invalid"]
+    return {
+        "case_count": len(real),
+        "check_passed": sum(record["check"]["exit_code"] == 0 for record in real),
+        "check_failed": sum(record["check"]["exit_code"] != 0 for record in real),
+        **counts,
+        "sample_size": denominator,
+        "precision": counts["valid"] / denominator if denominator else None,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if not args or args[0] not in {"validate", "check"}:
-        print("usage: review.py validate CASE_DIR FINDINGS_JSON | check CASE_DIR", file=sys.stderr)
+    if not args or args[0] not in {"validate", "check", "report", "evaluate"}:
+        print("usage: review.py validate CASE FINDINGS | check CASE | report CASE FINDINGS VERDICTS | evaluate CASE...", file=sys.stderr)
         return 2
-    if (args[0] == "validate" and len(args) != 3) or (args[0] == "check" and len(args) != 2):
+    if ((args[0] == "validate" and len(args) != 3)
+            or (args[0] == "check" and len(args) != 2)
+            or (args[0] == "report" and len(args) != 4)
+            or (args[0] == "evaluate" and len(args) < 2)):
         print("wrong number of arguments", file=sys.stderr)
         return 2
-    case_dir = Path(args[1])
     try:
+        if args[0] == "evaluate":
+            records = []
+            for raw_dir in args[1:]:
+                case_dir = Path(raw_dir)
+                case = load_case(case_dir)
+                findings = load_findings(case_dir / "findings.json", case, case_dir / "fixture")
+                records.append({"kind": case["kind"], "check": load_check(case_dir, case),
+                                "verdicts": load_verdicts(case_dir / "verdicts.json", findings)})
+            print(json.dumps(aggregate(records), indent=2))
+            return 0
+        case_dir = Path(args[1])
         if args[0] == "validate":
             case = load_case(case_dir)
             load_findings(Path(args[2]), case, case_dir / "fixture")
             return 0
-        result = run_check(case_dir)
-        (case_dir / "check.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-        return 0 if result["exit_code"] == 0 else 1
-    except ValueError as error:
+        if args[0] == "check":
+            result = run_check(case_dir)
+            (case_dir / "check.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+            return 0 if result["exit_code"] == 0 else 1
+        case = load_case(case_dir)
+        findings = load_findings(Path(args[2]), case, case_dir / "fixture")
+        check = load_check(case_dir, case)
+        verdicts = load_verdicts(Path(args[3]), findings)
+        (case_dir / "report.md").write_text(render_report(case, findings, check, verdicts), encoding="utf-8")
+        return 0
+    except (ValueError, OSError) as error:
         print(f"invalid evidence: {error}", file=sys.stderr)
         return 2
 
