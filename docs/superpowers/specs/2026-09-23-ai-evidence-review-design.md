@@ -12,12 +12,12 @@ The evidence card distinguishes the agent's claim, source location, observed che
 
 ## Minimal architecture
 
-- `cases/<id>/case.json`: curated public or user-owned case metadata, source URL and revision, and provenance. Each included fixture has local `tests/` runnable by Python's standard `unittest`; case input cannot specify a command. No secrets or private code are included in a submitted artifact.
+- `cases/<id>/case.json`: curated public or user-owned case metadata, source URL and revision, provenance, and `kind` (`illustrative` or `real`). Each included fixture has local `tests/` runnable by Python's standard `unittest`; case input cannot specify a command. No secrets or private code are included in a submitted artifact.
 - `findings.json`: agent-produced array with case ID, finding ID, file path, line, explanation, and suggested verification. Strict schema; unknown fields or unsafe paths are rejected.
-- `review` CLI: `validate` checks the case and finding schema, path containment, source-line existence, and case identity; `check` runs a fixed `python -m unittest discover` command with timeout in the curated local fixture; `report` writes the evidence card; `evaluate` aggregates human labels and check outcomes.
+- `review` CLI: `validate <case> <findings>` checks the case and finding schema, path containment, source-line existence, and case identity; `check <case>` runs a fixed `python -m unittest discover` command with timeout and writes `check.json`; `report <case> <findings> <verdicts>` writes `report.md`; `evaluate <case>...` aggregates human labels and check outcomes. `verdicts.json` maps each finding ID to `valid`, `invalid`, or `unresolved` and is supplied by a human reviewer.
 - Agent skill: instructions for analyzing one case, emitting `findings.json`, invoking the CLI, and explicitly abstaining when evidence is insufficient. The skill contains no duplicate business logic.
 
-Use Python 3.12 standard library unless a tested dependency is demonstrably needed. No web server, database, authentication, auto-fix, auto-PR, GitHub publishing, or arbitrary shell command input. The CLI does not invoke an AI API or require an API key; the agent running the skill supplies the AI reasoning.
+Use Python 3.12 or newer and its standard library unless a tested dependency is demonstrably needed. No web server, database, authentication, auto-fix, auto-PR, GitHub publishing, or arbitrary shell command input. The CLI does not invoke an AI API or require an API key; the agent running the skill supplies the AI reasoning.
 
 ## Case selection and evaluation
 
