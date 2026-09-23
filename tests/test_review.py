@@ -1,9 +1,10 @@
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
-from review import main
+from review import main, run_check
 
 
 class ValidationTests(unittest.TestCase):
@@ -43,6 +44,12 @@ class ValidationTests(unittest.TestCase):
 
     def validate(self):
         return main(["validate", str(self.case_dir), str(self.findings)])
+
+    def write_check_test(self, body):
+        tests = self.fixture / "tests"
+        tests.mkdir(exist_ok=True)
+        (tests / "__init__.py").write_text("", encoding="utf-8")
+        (tests / "test_source.py").write_text(body, encoding="utf-8")
 
     def test_valid_finding_is_accepted(self):
         self.assertEqual(self.validate(), 0)
@@ -89,6 +96,31 @@ class ValidationTests(unittest.TestCase):
         self.finding["line"] = True
         self.write_findings()
         self.assertNotEqual(self.validate(), 0)
+
+    def test_passing_check_uses_fixed_command_and_writes_result(self):
+        self.write_check_test("import unittest\nclass Check(unittest.TestCase):\n    def test_ok(self): self.assertTrue(True)\n")
+        self.assertEqual(main(["check", str(self.case_dir)]), 0)
+        result = json.loads((self.case_dir / "check.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["argv"], [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."])
+        self.assertEqual(result["exit_code"], 0)
+        self.assertFalse(result["timed_out"])
+
+    def test_failed_check_is_recorded(self):
+        self.write_check_test("import unittest\nclass Check(unittest.TestCase):\n    def test_bad(self): self.assertTrue(False)\n")
+        result = run_check(self.case_dir)
+        self.assertEqual(result["exit_code"], 1)
+        self.assertFalse(result["timed_out"])
+        self.assertIn("FAILED", result["stderr"])
+
+    def test_hanging_check_times_out(self):
+        self.write_check_test("import time\nimport unittest\nclass Check(unittest.TestCase):\n    def test_slow(self): time.sleep(5)\n")
+        result = run_check(self.case_dir, timeout_seconds=1)
+        self.assertTrue(result["timed_out"])
+        self.assertNotEqual(result["exit_code"], 0)
+
+    def test_check_refuses_missing_tests(self):
+        with self.assertRaises(ValueError):
+            run_check(self.case_dir)
 
 
 if __name__ == "__main__":

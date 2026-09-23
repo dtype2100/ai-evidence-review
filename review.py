@@ -1,7 +1,9 @@
 """Validate and record evidence for curated code-review cases."""
 
 import json
+import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -66,19 +68,71 @@ def load_findings(path: Path, case: dict, fixture: Path) -> list[dict]:
     return findings
 
 
+def run_check(case_dir: Path, timeout_seconds: int = 30) -> dict:
+    case = load_case(case_dir)
+    fixture = case_dir / "fixture"
+    tests = fixture / "tests"
+    if not tests.is_dir() or not _inside(fixture, tests):
+        raise ValueError("fixture/tests must be a directory inside the fixture")
+    test_files = list(tests.rglob("test*.py"))
+    if not test_files or any(not _inside(fixture, file) for file in test_files):
+        raise ValueError("fixture/tests must contain local test files")
+    argv = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."]
+    started = time.monotonic()
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=fixture,
+            shell=False,
+            timeout=timeout_seconds,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        exit_code, timed_out = completed.returncode, False
+        stdout, stderr = completed.stdout, completed.stderr
+    except subprocess.TimeoutExpired as error:
+        exit_code, timed_out = 124, True
+        stdout, stderr = error.stdout or b"", error.stderr or b""
+    except OSError as error:
+        raise ValueError(f"cannot run check: {error}") from error
+
+    def bounded(value):
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        return value[: 16 * 1024]
+
+    return {
+        "case_id": case["id"],
+        "argv": argv,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "duration_ms": round((time.monotonic() - started) * 1000),
+        "stdout": bounded(stdout),
+        "stderr": bounded(stderr),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
-    if len(args) != 3 or args[0] != "validate":
-        print("usage: review.py validate CASE_DIR FINDINGS_JSON", file=sys.stderr)
+    if not args or args[0] not in {"validate", "check"}:
+        print("usage: review.py validate CASE_DIR FINDINGS_JSON | check CASE_DIR", file=sys.stderr)
+        return 2
+    if (args[0] == "validate" and len(args) != 3) or (args[0] == "check" and len(args) != 2):
+        print("wrong number of arguments", file=sys.stderr)
         return 2
     case_dir = Path(args[1])
     try:
-        case = load_case(case_dir)
-        load_findings(Path(args[2]), case, case_dir / "fixture")
+        if args[0] == "validate":
+            case = load_case(case_dir)
+            load_findings(Path(args[2]), case, case_dir / "fixture")
+            return 0
+        result = run_check(case_dir)
+        (case_dir / "check.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+        return 0 if result["exit_code"] == 0 else 1
     except ValueError as error:
         print(f"invalid evidence: {error}", file=sys.stderr)
         return 2
-    return 0
 
 
 if __name__ == "__main__":
