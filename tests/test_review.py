@@ -164,6 +164,14 @@ class ValidationTests(unittest.TestCase):
         verdicts.write_text(json.dumps({"f1": "unresolved"}), encoding="utf-8")
         self.assertEqual(main(["report", str(self.case_dir), str(self.findings), str(verdicts)]), 2)
 
+    def test_report_rejects_check_from_older_case_metadata(self):
+        self.write_check_result()
+        self.case["source_revision"] = "different-revision"
+        self.write_case()
+        verdicts = self.case_dir / "verdicts.json"
+        verdicts.write_text(json.dumps({"f1": "unresolved"}), encoding="utf-8")
+        self.assertEqual(main(["report", str(self.case_dir), str(self.findings), str(verdicts)]), 2)
+
     def test_report_separates_claim_check_and_human_verdict(self):
         check = {"case_id": "demo", "argv": [sys.executable], "exit_code": 0,
                  "timed_out": False, "duration_ms": 10, "stdout": "OK", "stderr": ""}

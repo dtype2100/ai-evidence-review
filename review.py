@@ -13,7 +13,7 @@ from pathlib import Path
 
 CASE_KEYS = {"id", "source_url", "source_revision", "license", "description", "kind"}
 FINDING_KEYS = {"id", "case_id", "path", "line", "claim", "verification"}
-CHECK_KEYS = {"case_id", "argv", "exit_code", "timed_out", "duration_ms", "stdout", "stderr", "fixture_sha256"}
+CHECK_KEYS = {"case_id", "argv", "exit_code", "timed_out", "duration_ms", "stdout", "stderr", "fixture_sha256", "case_sha256"}
 CHECK_ARGV = [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-t", "."]
 
 
@@ -47,6 +47,10 @@ def _fixture_digest(fixture: Path) -> str:
             with path.open("rb") as stream:
                 digest.update(hashlib.file_digest(stream, "sha256").digest())
     return digest.hexdigest()
+
+
+def _case_digest(case_dir: Path) -> str:
+    return hashlib.sha256((case_dir / "case.json").read_bytes()).hexdigest()
 
 
 def load_case(case_dir: Path) -> dict:
@@ -96,6 +100,7 @@ def load_findings(path: Path, case: dict, fixture: Path) -> list[dict]:
 
 def run_check(case_dir: Path, timeout_seconds: int = 30) -> dict:
     case = load_case(case_dir)
+    case_sha256 = _case_digest(case_dir)
     fixture = case_dir / "fixture"
     fixture_sha256 = _fixture_digest(fixture)
     tests = fixture / "tests"
@@ -132,6 +137,7 @@ def run_check(case_dir: Path, timeout_seconds: int = 30) -> dict:
 
     return {
         "case_id": case["id"],
+        "case_sha256": case_sha256,
         "fixture_sha256": fixture_sha256,
         "argv": argv,
         "exit_code": exit_code,
@@ -148,6 +154,8 @@ def load_check(case_dir: Path, case: dict) -> dict:
         raise ValueError("check.json must contain exactly the check fields")
     if check["case_id"] != case["id"] or check["argv"] != CHECK_ARGV:
         raise ValueError("check.json does not match the case or fixed command")
+    if check["case_sha256"] != _case_digest(case_dir):
+        raise ValueError("check.json is stale for the current case metadata")
     if check["fixture_sha256"] != _fixture_digest(case_dir / "fixture"):
         raise ValueError("check.json is stale for the current fixture")
     if (type(check["exit_code"]) is not int or type(check["duration_ms"]) is not int
