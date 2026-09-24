@@ -48,7 +48,7 @@ AI 리뷰 문장은 그럴듯하지만, 소스 위치가 틀리거나 테스트 
 
 = 구현과 검증
 
-Python 표준 라이브러리만 쓰는 CLI와 얇은 에이전트 스킬로 구현했다. 모델 API, 서버, DB, 자동 수정·PR 발행 기능은 넣지 않았다. Gemini와 BrowserOS Neo는 공개 사례·출처 조사, Claude는 독립 코드 감사와 후보의 finding 작성, Copilot CLI는 Git 검사를 맡았다. *자동 테스트 26개 통과*; 이 중 한 테스트는 사례 체크가 의도대로 종료 코드 1로 실패함을 확인한다.
+Python 표준 라이브러리만 쓰는 CLI와 얇은 에이전트 스킬로 구현했다. 모델 API, 서버, DB, 자동 수정·PR 발행 기능은 넣지 않았다. Codex는 CLI·회귀 테스트 작성, Gemini와 BrowserOS Neo는 공개 사례·출처 조사, Claude는 독립 코드 감사와 후보의 finding 작성, Copilot CLI는 Git 검사를 맡았다. *자동 테스트 27개 통과*; 이 중 한 테스트는 urllib3 후보의 체크가 의도대로 종료 코드 1과 `binascii.Error`를 기록함을 확인한다.
 
 = 독립 감사에서 회귀 테스트까지
 
@@ -60,7 +60,7 @@ Claude의 별도 코드 감사를 그대로 채택하지 않고, 각 위험을 �
   stroke: (bottom: 0.4pt + rgb("#D8E2E8")),
   [*확인된 실패 모드*], [*수정과 확인*],
   [AI 문장에 판정 제목 삽입], [줄바꿈을 평탄화해 가짜 `Human verdict` 헤더 차단],
-  [수정된 파일에 오래된 체크 재사용], [fixture 해시를 기록하고 불일치 시 보고 거부],
+  [수정된 사례에 오래된 체크 재사용], [사례 메타데이터·fixture 해시가 달라지면 보고 거부],
   [심볼릭 링크로 실행·출력 범위 이탈], [fixture 및 출력 경로 링크 거부],
   [같은 사례를 중복 집계], [중복 사례 ID 거부],
 )
@@ -86,13 +86,13 @@ Claude의 별도 코드 감사를 그대로 채택하지 않고, 각 위험을 �
 
 #v(10pt)
 #block(width: 100%, fill: rgb("#F2F5F8"), inset: 10pt, radius: 5pt)[
-  *현재 집계*  공개 출처 후보 1건 · 미결 1건 · 판정 표본 0건 · precision = `null`.
+  *현재 집계*  공개 출처 후보 1건(채택 사례 아님) · 체크 실패 1건 · 미결 1건 · 판정 표본 0건 · precision = `null`.
   이는 모델 정확도, 산업 현장 효과, 본선 진출 가능성을 측정한 수치가 아니다.
 ]
 
 = 재현과 출처
 
-저장소 루트에서 아래 명령을 실행한다. 첫 번째 명령(`check`)은 이 사례에서 실패 코드 1이 예상된다. `check.json`은 실행한 Python 경로에 묶이므로 다른 환경에서는 체크를 다시 생성한다.
+저장소 루트에서 아래 명령을 실행한다. 첫 번째 명령(`check`)은 이 사례에서 실패 코드 1이 예상된다. `check.json`은 실행한 Python 경로와 `case.json`·fixture 해시에 묶이므로, 환경이나 사례가 바뀌면 `evaluate`가 기존 결과를 거부한다. 다시 체크한 뒤의 예상 집계는 `case_count` 1, `check_failed` 1, `unresolved` 1, `sample_size` 0, `precision` `null`이다. 여기서 `case_count`는 채택된 사례 수가 아니다.
 
 ```sh
 python3 review.py check cases/urllib3-fingerprint-5211
